@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationIcon>Resources/app.ico</ApplicationIcon>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>Auraminus</AssemblyName>
+    <RootNamespace>Auraminus.Wpf</RootNamespace>
+
+    <!-- Project & Author Metadata -->
+    <Authors>Indal Singh</Authors>
+    <Company>Indal Singh</Company>
+    <Product>Auraminus</Product>
+    <Title>Auraminus — Sound, in good company.</Title>
+    <Description>Real-time multi-speaker audio synchronization for Windows.</Description>
+    <Copyright>Copyright © 2026 Indal Singh</Copyright>
+    <Version>2.0.0</Version>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="Resources/app.ico" />
+    <None Include="Resources/app.ico" Link="app.ico" TargetPath="app.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\output\native\bin\AuraminusEngine.dll" Link="AuraminusEngine.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

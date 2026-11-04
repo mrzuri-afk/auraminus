@@ -1,0 +1,27 @@
+<Application x:Class="Auraminus.Wpf.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             StartupUri="Shell/MainWindow.xaml">
+    <Application.Resources>
+        <!-- Auraminus listening-room palette -->
+        <Color x:Key="Bg">#101919</Color>
+        <Color x:Key="Surface">#182622</Color>
+        <Color x:Key="SurfaceHover">#1C2D28</Color>
+        <Color x:Key="Border">#2B4037</Color>
+        <Color x:Key="Text">#EDF5EF</Color>
+        <Color x:Key="Muted">#91A89D</Color>
+        <Color x:Key="Blue">#A6E5B9</Color>
+        <Color x:Key="Purple">#78BFA1</Color>
+        <Color x:Key="PurpleSoft">#BBEDC9</Color>
+
+        <SolidColorBrush x:Key="BgBrush" Color="{StaticResource Bg}"/>
+        <SolidColorBrush x:Key="SurfaceBrush" Color="{StaticResource Surface}"/>
+        <SolidColorBrush x:Key="SurfaceHoverBrush" Color="{StaticResource SurfaceHover}"/>
+        <SolidColorBrush x:Key="BorderBrushKey" Color="{StaticResource Border}"/>
+        <SolidColorBrush x:Key="TextBrush" Color="{StaticResource Text}"/>
+        <SolidColorBrush x:Key="MutedBrush" Color="{StaticResource Muted}"/>
+        <SolidColorBrush x:Key="BlueBrush" Color="{StaticResource Blue}"/>
+        <SolidColorBrush x:Key="PurpleBrush" Color="{StaticResource Purple}"/>
+        <SolidColorBrush x:Key="PurpleSoftBrush" Color="{StaticResource PurpleSoft}"/>
+    </Application.Resources>
+</Application>

@@ -1,0 +1,13 @@
+# Generated files
+**/output/
+**/bin/
+**/obj/
+.vs/
+.idea/
+*.user
+*.suo
+*.log
+*.tmp
+*.pdb
+Thumbs.db
+.DS_Store

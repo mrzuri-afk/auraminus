@@ -8,6 +8,7 @@ public final class Session {
     public static final Map<Integer, Output> outputs = new LinkedHashMap<>();
     public static volatile boolean running;
     public static boolean starting;
+    public static boolean captureMode;
     public static volatile String status = "Ready · choose your outputs";
     public static volatile float peak;
     public static volatile long frames;

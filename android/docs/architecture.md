@@ -19,3 +19,9 @@ The optional keep-stream-open pulse experiment adds newly exposed Bluetooth outp
 Playback capture follows [Android's capture requirements](https://developer.android.com/media/platform/av-capture), including permission, user consent, compatible source usage and capture policy. Foreground service types follow [Android's service requirements](https://developer.android.com/develop/background-work/services/fgs/service-types). No root, hidden API, pairing automation, microphone recording or audio file export is used.
 
 The `mobile` module keeps Java sources and matching tests under `dev.auraminus.mobile`. `tools/build.ps1` runs unit tests, Android lint and APK assembly, then creates the named debug APK under ignored `output/`.
+
+## Sharing controls (1.0.1)
+
+`RoutingPlan` validates the original endpoint, excludes it from rendered copies and deduplicates requested IDs. Each live checkbox update reconciles renderer additions/removals through the existing service and capture token. Worker shutdown suppresses error callbacks for intentionally removed tracks. Active endpoint state is preserved during UI inventory refreshes so gain controls remain attached to renderers.
+
+Capture uses a three-block queue (up to 30 ms of queued PCM) and requests smaller platform buffers plus low-latency playback. These are requests, not measurements of end-to-end latency. A separate system-media slider controls original playback; per-output gain continues to use AudioTrack gain. Original copy controls are hidden during capture. Tests cover source bypass, live removal, missing sources and duplicate endpoint requests.

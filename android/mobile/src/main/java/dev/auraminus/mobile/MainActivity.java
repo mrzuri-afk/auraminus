@@ -19,7 +19,11 @@ public final class MainActivity extends Activity {
     private final int ink = Color.rgb(237,245,239), muted = Color.rgb(145,168,157), mint = Color.rgb(166,229,185);
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Map<Integer, TextView> routes = new HashMap<>();
-    private final List<View> lockedControls = new ArrayList<>();
+    private final Map<Integer, CheckBox> selections = new HashMap<>();
+    private final Map<Integer, View> streamControls = new HashMap<>();
+    private SeekBar mediaVolume;
+    private TextView mediaLevel;
+    private boolean changingMediaVolume;
     private AudioManager manager;
     private LinearLayout root, deviceList;
     private TextView status, metrics, count, bluetoothStatus;
@@ -46,10 +50,16 @@ public final class MainActivity extends Activity {
                 bluetooth.refresh(); lastBluetoothRefresh = SystemClock.elapsedRealtime();
             }
             bluetoothStatus.setText(Session.bluetooth);
-            for (View view : lockedControls) view.setEnabled(enabled);
+            for (Map.Entry<Integer, CheckBox> entry : selections.entrySet())
+                entry.getValue().setEnabled(!Session.starting && !requesting && !(Session.running && Session.captureMode && entry.getKey() == Session.primaryId));
+            for (Map.Entry<Integer, View> entry : streamControls.entrySet())
+                entry.getValue().setVisibility(Session.running && Session.captureMode && entry.getKey() == Session.primaryId ? View.GONE : View.VISIBLE);
+            updateMediaVolume();
             for (Map.Entry<Integer, TextView> item : routes.entrySet()) {
                 Session.Output o = Session.outputs.get(item.getKey());
-                if (o != null) item.getValue().setText(o.droppedBlocks > 0 ? getString(R.string.route_drops, o.route, o.droppedBlocks) : o.route);
+                if (o != null) item.getValue().setText(Session.running && Session.captureMode && o.id == Session.primaryId
+                        ? getString(R.string.original_volume_note)
+                        : o.droppedBlocks > 0 ? getString(R.string.route_drops, o.route, o.droppedBlocks) : o.route);
             }
             handler.postDelayed(this, 400);
         }
@@ -61,6 +71,7 @@ public final class MainActivity extends Activity {
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
         manager = getSystemService(AudioManager.class);
+        setVolumeControlStream(AudioManager.STREAM_MUSIC);
         mixStore = new MixStore(this);
         requesting = saved != null && saved.getBoolean("capturePending", false);
         ScrollView scroll = new ScrollView(this);
@@ -93,15 +104,40 @@ public final class MainActivity extends Activity {
             Session.status = "Session stopped";
         }); add(session, stop, 0); add(root, session, 24);
 
+        LinearLayout volumeCard = card();
+        add(volumeCard, text("Phone media volume", 16, ink), 6);
+        add(volumeCard, text("Controls Android media, including the original sound. Output sliders below change only Auraminus copies.", 12, muted), 8);
+        mediaLevel = text("", 12, mint); add(volumeCard, mediaLevel, 4);
+        mediaVolume = new SeekBar(this); mediaVolume.setContentDescription("Phone media volume");
+        mediaVolume.setMax(manager.getStreamMaxVolume(AudioManager.STREAM_MUSIC));
+        mediaVolume.setEnabled(!manager.isVolumeFixed());
+        mediaVolume.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar slider, int value, boolean user) {
+                if (user) try { manager.setStreamVolume(AudioManager.STREAM_MUSIC, value, 0); }
+                catch (SecurityException error) { Session.status = "Use the phone's media volume buttons for this route"; }
+                mediaLevel.setText(getString(R.string.media_level, manager.getStreamVolume(AudioManager.STREAM_MUSIC), manager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)));
+            }
+            @Override public void onStartTrackingTouch(SeekBar slider) { changingMediaVolume = true; }
+            @Override public void onStopTrackingTouch(SeekBar slider) { changingMediaVolume = false; updateMediaVolume(); }
+        });
+        add(volumeCard, mediaVolume, 0); add(root, volumeCard, 22); updateMediaVolume();
         add(root, text("Original audio source", 19, ink), 6);
         add(root, text("For sharing, choose the output already playing your app. Android controls its original sound; Auraminus sends a copy to the other selected outputs.", 13, muted), 8);
         primary = new Spinner(this); primary.setContentDescription("Original playback output"); add(root, primary, 22);
         count = text("OUTPUT DEVICES", 11, mint); add(root, count, 12);
+        Button scan = button("Refresh available outputs", Color.rgb(41,64,57), ink);
+        scan.setOnClickListener(v -> rebuildDevices()); add(root, scan, 12);
         deviceList = column(); add(root, deviceList, 4);
+        Button resetDelay = button("Reset added delays to 0 ms", Color.rgb(41,64,57), ink);
+        resetDelay.setOnClickListener(v -> {
+            for (Session.Output output : Session.outputs.values()) output.delayMs = 0;
+            scheduleSave(); rebuildDevices();
+            Toast.makeText(this, "Added delays reset", Toast.LENGTH_SHORT).show();
+        }); add(root, resetDelay, 10);
         Button save = button("Save this mix", Color.rgb(41,64,57), ink);
         save.setOnClickListener(v -> { mixStore.save(); Toast.makeText(this, "Mix saved on this phone", Toast.LENGTH_SHORT).show(); });
         add(root, save, 8);
-        add(root, text("Your mix saves automatically. Delay is added alignment time, not a latency measurement.", 12, muted), 20);
+        add(root, text("Start sharing with 0 ms added delay. Capture already arrives later than the original; adding delay can increase echo. Your mix saves automatically.", 12, muted), 20);
 
         LinearLayout advanced = column(); advanced.setVisibility(View.GONE);
         Button details = button("Device support & diagnostics  +", Color.rgb(24,38,34), ink);
@@ -134,7 +170,7 @@ public final class MainActivity extends Activity {
         add(diagnostics, text("Test pulse only. Keeps tracks open and tries newly exposed Bluetooth outputs. This cannot force a second active Bluetooth route.", 12, muted), 12);
         Button report = button("Copy route report", Color.rgb(41,64,57), ink);
         report.setOnClickListener(v -> copyReport()); add(diagnostics, report, 0); add(advanced, diagnostics, 12);
-        add(advanced, text("Auraminus Android 1.0 · Routing approach inspired by Indal Singh's WaveSync (MIT).", 11, muted), 12);
+        add(advanced, text("Auraminus Android 1.0.1 · Routing approach inspired by Indal Singh's WaveSync (MIT).", 11, muted), 12);
         add(root, advanced, 0);
         add(root, text("LOCAL AUDIO. SHARED SPACE.", 10, muted), 0);
         rebuildDevices();
@@ -152,13 +188,21 @@ public final class MainActivity extends Activity {
         handler.removeCallbacks(refresh); manager.unregisterAudioDeviceCallback(deviceCallback); super.onStop();
         if (bluetooth != null) { bluetooth.close(); bluetooth = null; }
     }
+    private void updateMediaVolume() {
+        if (mediaVolume == null || changingMediaVolume) return;
+        int maximum = manager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+        int value = manager.getStreamVolume(AudioManager.STREAM_MUSIC);
+        mediaVolume.setMax(maximum); mediaVolume.setProgress(value);
+        mediaVolume.setEnabled(!manager.isVolumeFixed());
+        mediaLevel.setText(getString(R.string.media_level, value, maximum));
+    }
     private void rebuildDevices() {
         available = Arrays.stream(manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS))
                 .filter(d -> OutputPolicy.selectable(d.getType())).toArray(AudioDeviceInfo[]::new);
         Set<Integer> ids = new HashSet<>();
         for (AudioDeviceInfo d : available) ids.add(d.getId());
         for (Session.Output o : Session.outputs.values()) o.available = ids.contains(o.id);
-        deviceList.removeAllViews(); routes.clear(); lockedControls.clear();
+        deviceList.removeAllViews(); routes.clear(); selections.clear(); streamControls.clear();
         ArrayList<String> names = new ArrayList<>(); names.add("Choose original playback output…");
         int selected = 0;
         for (int index = 0; index < available.length; index++) {
@@ -168,7 +212,7 @@ public final class MainActivity extends Activity {
             if (device.getId() == Session.primaryId) selected = index + 1;
             String key = MixStore.key(device);
             Session.Output output = Session.outputs.get(device.getId());
-            if (output == null || (output.preferenceKey != null && !key.equals(output.preferenceKey))) {
+            if (output == null || (!Session.running && !Session.starting && output.preferenceKey != null && !key.equals(output.preferenceKey))) {
                 output = new Session.Output(device.getId(), name);
                 mixStore.restore(key, output);
                 Session.outputs.put(device.getId(), output);
@@ -178,11 +222,18 @@ public final class MainActivity extends Activity {
             output.available = true;
             LinearLayout row = card();
             CheckBox choice = new CheckBox(this); choice.setText(name); choice.setTextColor(ink); choice.setTextSize(16);
-            choice.setChecked(output.selected); choice.setEnabled(!Session.running); lockedControls.add(choice);
-            choice.setOnCheckedChangeListener((b, checked) -> { endpoint.selected = checked; scheduleSave(); }); add(row, choice, 6);
+            choice.setChecked(output.selected); selections.put(output.id, choice);
+            choice.setEnabled(!Session.starting && !requesting && !(Session.running && Session.captureMode && output.id == Session.primaryId));
+            choice.setOnCheckedChangeListener((b, checked) -> {
+                endpoint.selected = checked; scheduleSave();
+                if (Session.running) startService(new Intent(this, AudioService.class).setAction(AudioService.UPDATE_OUTPUTS));
+            }); add(row, choice, 6);
             TextView route = text(output.route, 12, muted); routes.put(output.id, route); add(row, route, 12);
-            slider(row, "Volume", (int)(output.gain * 100), 100, "%", value -> { endpoint.gain = value / 100f; scheduleSave(); });
-            slider(row, "Added delay", output.delayMs, 500, " ms", value -> { endpoint.delayMs = value; scheduleSave(); });
+            LinearLayout controls = column(); streamControls.put(output.id, controls);
+            slider(controls, "Auraminus copy gain", (int)(output.gain * 100), 100, "%", value -> { endpoint.gain = value / 100f; scheduleSave(); });
+            slider(controls, "Added delay", output.delayMs, 500, " ms", value -> { endpoint.delayMs = value; scheduleSave(); });
+            controls.setVisibility(Session.running && Session.captureMode && output.id == Session.primaryId ? View.GONE : View.VISIBLE);
+            add(row, controls, 0);
             add(deviceList, row, 12);
         }
         for (Session.Output output : Session.outputs.values()) if (!output.available) {
@@ -212,10 +263,14 @@ public final class MainActivity extends Activity {
         count.setText(getResources().getQuantityString(R.plurals.output_count, available.length, available.length, bt));
     }
     private boolean validate(boolean captureMode) {
-        long selected = Session.outputs.values().stream().filter(o -> o.available && o.selected && (!captureMode || o.id != Session.primaryId)).count();
-        if (captureMode && Session.primaryId == -1) { Session.status = "Choose the original playback output first"; return false; }
-        if (selected == 0) { Session.status = "Select " + (captureMode ? "an additional" : "at least one") + " output below"; return false; }
-        return true;
+        try {
+            RoutingPlan plan = new RoutingPlan(Session.outputs.values(), captureMode, Session.primaryId);
+            if (plan.rendered.isEmpty()) {
+                Session.status = captureMode ? "Select an additional output for the audio copy" : "Select at least one output below";
+                return false;
+            }
+            return true;
+        } catch (IllegalStateException error) { Session.status = error.getMessage(); return false; }
     }
     private void startTone() {
         if (!validate(false)) return;
@@ -259,7 +314,7 @@ public final class MainActivity extends Activity {
     }
     private void copyReport() {
         if (bluetooth != null) bluetooth.refresh();
-        StringBuilder report = new StringBuilder("Auraminus Android 1.0\n").append(Build.MANUFACTURER).append(' ').append(Build.MODEL)
+        StringBuilder report = new StringBuilder("Auraminus Android 1.0.1\n").append(Build.MANUFACTURER).append(' ').append(Build.MODEL)
                 .append("\nAndroid ").append(Build.VERSION.RELEASE).append(" / API ").append(Build.VERSION.SDK_INT)
                 .append("\n").append(Session.status).append("\nPrimary id: ").append(Session.primaryId).append('\n');
         report.append("Running: ").append(Session.running).append("\nRoute observations are last observed, not proof of simultaneous sound.\n");

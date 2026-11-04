@@ -15,12 +15,20 @@ A native Android listening room for testing exposed audio outputs and sharing ca
 
 Android controls active media routing. Two paired Bluetooth devices are not necessarily two simultaneous outputs. Auraminus cannot unlock a hidden second route, force OEM Dual Audio, or provide Auracast on unsupported hardware. A matched route is an Android observation, not proof of acoustic alignment.
 
+## Sharing update 1.0.1
+
+Phone media volume now controls Android media, including original playback. Per-output gain controls only the Auraminus stream. The original output's copy controls are hidden during sharing because it is not rendered a second time.
+
+Existing exposed outputs can be checked or unchecked while sharing; removing the last copy ends the session. Refreshing the device list preserves the renderer's live gain state. Input-only connection events no longer stop sharing. A physical output change still ends capture so the original playback output can be confirmed before restarting.
+
+Capture queues and requested buffers are smaller to reduce avoidable lag. Use **Reset added delays to 0 ms** before comparing normal playback with sharing. Capture and Bluetooth latency remain: this update does not establish echo-free sound or guarantee that Android will activate multiple Bluetooth routes.
+
 ## Use
 
 1. Connect speakers or headphones in Android settings.
 2. Select the outputs exposed by your phone, then use **Test outputs**. Listen on each device.
 3. For **Share app audio**, select the original output already playing your source app and select at least one additional output. Grant Android's audio and capture consent.
-4. Adjust volume and delay for each test/mirrored stream. Android controls the source app's original sound. Protected audio, calls and apps that disallow capture are outside scope; the app does not capture microphone input.
+4. Use **Phone media volume** for the original sound and **Auraminus copy gain** for each copied stream. Start with added delay at 0 ms. Android controls the source app's original sound. Protected audio, calls and apps that disallow capture are outside scope; the app does not capture microphone input.
 5. Mix changes save automatically. **Save this mix** saves immediately. Closing the screen keeps an active foreground session running; use **Stop session** or the notification's Stop action to end it.
 
 Saved mixes use output type, product name and an address when available, hashed into a local key. If Android exposes identical names without stable addresses, devices may share a saved profile. Android output IDs themselves are not persisted. Settings remain on this phone and the renamed app uses its own storage; older WaveSync Android installs are separate.

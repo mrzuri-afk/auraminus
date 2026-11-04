@@ -10,7 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 public final class AudioService extends Service {
-    public static final String START_TONE = "tone", START_CAPTURE = "capture", STOP = "stop";
+    public static final String START_TONE = "tone", START_CAPTURE = "capture", STOP = "stop", UPDATE_OUTPUTS = "update_outputs";
     private final Handler main = new Handler(Looper.getMainLooper());
     private AudioEngine engine;
     private MediaProjection projection;
@@ -48,7 +48,10 @@ public final class AudioService extends Service {
                 }
             }
             // Capture's original route may change when plugging in a device.
-            if (projection != null && Session.running) finish("Audio devices changed. Recheck the original playback output and restart.");
+            boolean outputAdded = false;
+            for (AudioDeviceInfo device : added) if (device.isSink() && OutputPolicy.selectable(device.getType())) outputAdded = true;
+            if (projection != null && Session.running && outputAdded)
+                finish("Playback outputs changed. Confirm the original output and restart sharing to avoid duplicate audio.");
         }
     };
     @Override public void onCreate() {
@@ -59,6 +62,10 @@ public final class AudioService extends Service {
                 new NotificationChannel("audio", "Auraminus audio sessions", NotificationManager.IMPORTANCE_LOW));
     }
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
+        if (intent != null && UPDATE_OUTPUTS.equals(intent.getAction())) {
+            if (engine != null) updateOutputs(); else stopSelf();
+            return START_NOT_STICKY;
+        }
         Session.starting = false;
         if (intent == null || STOP.equals(intent.getAction())) {
             finish("Session stopped"); return START_NOT_STICKY;
@@ -66,6 +73,7 @@ public final class AudioService extends Service {
         if (engine != null) return START_NOT_STICKY;
         boolean capture = START_CAPTURE.equals(intent.getAction());
         holdTest = !capture && Session.holdRouteTest;
+        Session.captureMode = capture;
         try {
             PendingIntent open = PendingIntent.getActivity(this, 0, new Intent(this, MainActivity.class), PendingIntent.FLAG_IMMUTABLE);
             PendingIntent stop = PendingIntent.getService(this, 1, new Intent(this, AudioService.class).setAction(STOP), PendingIntent.FLAG_IMMUTABLE);
@@ -83,15 +91,15 @@ public final class AudioService extends Service {
                 projection = getSystemService(MediaProjectionManager.class).getMediaProjection(Activity.RESULT_OK, grant);
                 projection.registerCallback(projectionCallback, main);
             }
-            ArrayList<Session.Output> selected = new ArrayList<>();
-            for (Session.Output output : Session.outputs.values()) {
-                if (output.available) output.route = "Not selected this session";
-                if (output.selected && output.available) { selected.add(output); requiredIds.add(output.id); }
-            }
-            if (capture) requiredIds.add(Session.primaryId);
+            RoutingPlan plan = new RoutingPlan(Session.outputs.values(), capture, Session.primaryId);
+            if (plan.rendered.isEmpty()) throw new IllegalStateException("Select at least one copied output");
+            for (Session.Output output : Session.outputs.values())
+                if (output.available) output.route = capture && output.id == Session.primaryId
+                        ? "Original playback · use Phone media volume" : "Not selected this session";
+            requiredIds.addAll(plan.required);
             engine = new AudioEngine(error -> main.post(() -> finish("Audio stopped: " + error)), holdTest);
             Session.frames = 0;
-            engine.start(manager, selected, projection, Session.primaryId);
+            engine.start(manager, plan.rendered, projection, Session.primaryId);
             Session.running = true;
             Session.log("Started " + (capture ? "capture" : holdTest ? "keep-stream-open experiment" : "tone test"));
             main.post(inspectBluetooth);
@@ -103,6 +111,14 @@ public final class AudioService extends Service {
         } catch (RuntimeException error) { finish("Could not start: " + error.getMessage()); }
         return START_NOT_STICKY;
     }
+    private void updateOutputs() {
+        try {
+            RoutingPlan plan = new RoutingPlan(Session.outputs.values(), Session.captureMode, Session.primaryId);
+            if (plan.rendered.isEmpty()) { finish("No copied outputs selected. Session stopped."); return; }
+            requiredIds.clear(); requiredIds.addAll(plan.required);
+            engine.updateOutputs(manager, plan.rendered, Session.primaryId);
+        } catch (RuntimeException error) { finish("Sharing stopped: " + error.getMessage()); }
+    }
     private boolean registering;
     private void finish(String reason) {
         Session.status = reason;
@@ -112,6 +128,7 @@ public final class AudioService extends Service {
     private void cleanup() {
         if (engine != null) Session.log("Session ended: " + Session.status);
         Session.running = false;
+        Session.captureMode = false;
         Session.starting = false;
         manager.unregisterAudioDeviceCallback(devices);
         if (engine != null) { engine.stop(); engine = null; }

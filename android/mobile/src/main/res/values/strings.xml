@@ -7,4 +7,6 @@
     </plurals>
     <string name="route_drops">%1$s · dropped blocks: %2$d</string>
     <string name="control_value">%1$s   %2$d%3$s</string>
+    <string name="media_level">Android media level: %1$d/%2$d</string>
+    <string name="original_volume_note">Original playback · use Phone media volume above. Auraminus does not render a second copy here.</string>
 </resources>

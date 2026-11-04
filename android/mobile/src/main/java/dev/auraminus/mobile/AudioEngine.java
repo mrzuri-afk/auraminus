@@ -18,6 +18,7 @@ public final class AudioEngine {
     private final boolean isolateOutputFailures;
     private AudioRecord recorder;
     private Thread producer;
+    private boolean mirrorCapture;
     public AudioEngine(Consumer<String> failure, boolean isolateOutputFailures) {
         this.failure = failure;
         this.isolateOutputFailures = isolateOutputFailures;
@@ -25,6 +26,7 @@ public final class AudioEngine {
 
     public void start(AudioManager manager, List<Session.Output> selected,
                       MediaProjection projection, int primary) {
+        mirrorCapture = projection != null;
         try {
             for (Session.Output state : selected) {
                 if (projection != null && state.id == primary) {
@@ -48,7 +50,7 @@ public final class AudioEngine {
                 recorder = new AudioRecord.Builder().setAudioPlaybackCaptureConfig(config)
                         .setAudioFormat(new AudioFormat.Builder().setSampleRate(RATE)
                                 .setChannelMask(AudioFormat.CHANNEL_IN_STEREO).setEncoding(AudioFormat.ENCODING_PCM_16BIT).build())
-                        .setBufferSizeInBytes(Math.max(min * 2, SAMPLES * 4)).build();
+                        .setBufferSizeInBytes(Math.max(min, SAMPLES * 2)).build();
                 if (recorder.getState() != AudioRecord.STATE_INITIALIZED) throw new IllegalStateException("Capture initialization failed");
                 recorder.startRecording();
             }
@@ -115,6 +117,35 @@ public final class AudioEngine {
         renderer.start();
         Session.log("Opened extra test track for #" + state.id + " " + state.name);
     }
+    /** Reconcile requested mirrors on the service main thread; the producer keeps its capture token. */
+    public void updateOutputs(AudioManager manager, List<Session.Output> selected, int primary) {
+        for (Renderer renderer : outputs) {
+            boolean wanted = false;
+            for (Session.Output state : selected)
+                if (state.id == renderer.state.id && (!mirrorCapture || state.id != primary)) wanted = true;
+            if (!wanted) {
+                outputs.remove(renderer); renderer.stop(); renderer.state.route = "Not selected";
+            }
+        }
+        for (Session.Output state : selected) {
+            if (mirrorCapture && state.id == primary) continue;
+            boolean present = false;
+            for (Renderer renderer : outputs) if (renderer.state.id == state.id) present = true;
+            if (present) continue;
+            try {
+                AudioDeviceInfo device = null;
+                for (AudioDeviceInfo candidate : manager.getDevices(AudioManager.GET_DEVICES_OUTPUTS))
+                    if (candidate.getId() == state.id && OutputPolicy.selectable(candidate.getType())) device = candidate;
+                if (device == null) throw new IllegalStateException("Output is no longer exposed by Android");
+                Renderer renderer = new Renderer(device, state);
+                outputs.add(renderer); renderer.start();
+            } catch (RuntimeException error) {
+                state.route = "Could not enable output: " + error.getMessage();
+                Session.log(state.route);
+                Session.status = "An output could not be enabled; inspect its route below";
+            }
+        }
+    }
     private static void join(Thread thread) {
         if (thread == null || thread == Thread.currentThread()) return;
         try { thread.join(2000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
@@ -123,7 +154,7 @@ public final class AudioEngine {
     private final class Renderer {
         final Session.Output state;
         final AudioTrack track;
-        final PcmQueue queue = new PcmQueue(12, SAMPLES);
+        final PcmQueue queue = new PcmQueue(mirrorCapture ? 3 : 12, SAMPLES);
         final PcmDelay delay = new PcmDelay(RATE);
         Thread worker;
         int lastRouteId = Integer.MIN_VALUE;
@@ -138,7 +169,9 @@ public final class AudioEngine {
                             .setAllowedCapturePolicy(AudioAttributes.ALLOW_CAPTURE_BY_NONE).build())
                     .setAudioFormat(new AudioFormat.Builder().setSampleRate(RATE)
                             .setEncoding(AudioFormat.ENCODING_PCM_16BIT).setChannelMask(AudioFormat.CHANNEL_OUT_STEREO).build())
-                    .setBufferSizeInBytes(Math.max(min, SAMPLES * 4)).setTransferMode(AudioTrack.MODE_STREAM).build();
+                    .setBufferSizeInBytes(Math.max(min, SAMPLES * (mirrorCapture ? 2 : 4)))
+                    .setPerformanceMode(mirrorCapture ? AudioTrack.PERFORMANCE_MODE_LOW_LATENCY : AudioTrack.PERFORMANCE_MODE_NONE)
+                    .setTransferMode(AudioTrack.MODE_STREAM).build();
             if (track.getState() != AudioTrack.STATE_INITIALIZED || !track.setPreferredDevice(device)) {
                 track.release(); throw new IllegalStateException("Android rejected output: " + state.name);
             }
@@ -151,7 +184,7 @@ public final class AudioEngine {
                 short[] input = new short[SAMPLES], rendered = new short[SAMPLES];
                 try {
                     track.play();
-                    while (active.get()) {
+                    while (active.get() && healthy) {
                         int count = queue.take(input);
                         if (count < 0) break;
                         AudioDeviceInfo actual = track.getRoutedDevice();
@@ -164,10 +197,11 @@ public final class AudioEngine {
                         state.route = actual == null ? "Waiting for Android route…"
                                 : matched ? "Route matched • " + actual.getProductName() + " (#" + actual.getId() + ")"
                                 : "MUTED • Android routed to " + actual.getProductName() + " (#" + actual.getId() + ")";
-                        track.setVolume(matched ? state.gain : 0);
+                        if (track.setVolume(matched ? state.gain : 0) != AudioTrack.SUCCESS)
+                            throw new IllegalStateException("Android rejected stream volume");
                         delay.process(input, rendered, count, state.delayMs);
                         int offset = 0;
-                        while (offset < count && active.get()) {
+                        while (offset < count && active.get() && healthy) {
                             int written = track.write(rendered, offset, count - offset, AudioTrack.WRITE_BLOCKING);
                             if (written <= 0) throw new IllegalStateException(written == AudioTrack.ERROR_DEAD_OBJECT
                                     ? "AudioTrack invalidated (ERROR_DEAD_OBJECT, -6); restart to recreate this track"
@@ -177,10 +211,11 @@ public final class AudioEngine {
                     }
                 } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
                 catch (RuntimeException e) {
+                    boolean reportFailure = active.get() && healthy;
                     healthy = false;
                     queue.close();
                     try { track.pause(); track.flush(); } catch (IllegalStateException ignored) {}
-                    if (active.get()) {
+                    if (reportFailure) {
                         String error = "Output #" + state.id + " " + state.name + ": " + e.getMessage();
                         state.route = "FAILED • " + error;
                         Session.log(error);
